@@ -8,13 +8,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 PROMPTS = [
-    "Human: Give me a fully functional FastAPI server. Show the full, long python code without stop.\n\nAssistant:",
-    "Human: Imagine you are an experienced Ethereum developer tasked with creating a smart contract for a blockchain messenger. Develop a Solidity smart contract for this purpose, including the necessary functions. Please provide the code and explanations.\n\nAssistant:",
-    "Human: Write a travel blog post to Hawaii.\n\nAssistant:",
-    "Human: I want you to act as a storyteller. Come up with entertaining stories that are engaging, imaginative and captivating for the audience. Answer in more than 5000 words. My first request is 'I need an interesting story on perseverance.'\n\nAssistant:",
-    "Human: Solve x^2 = -1. Think step-by-step. Give me a long detailed explanation.\n\nAssistant:",
-    "Human: Tell me about the president of the USA in wikipedia style.\n\nAssistant:",
-    "Human: Hello? Who are you? Write code, math, and poem to explain yourself.\n\nAssistant:",
+    "Give me a fully functional FastAPI server. Show the full, long python code without stop.\n\nAssistant:",
+    "Imagine you are an experienced Ethereum developer tasked with creating a smart contract for a blockchain messenger. Develop a Solidity smart contract for this purpose, including the necessary functions. Please provide the code and explanations.\n\nAssistant:",
+    "Write a travel blog post to Hawaii.\n\nAssistant:",
+    "I want you to act as a storyteller. Come up with entertaining stories that are engaging, imaginative and captivating for the audience. Answer in more than 5000 words. My first request is 'I need an interesting story on perseverance.'\n\nAssistant:",
+    "Solve x^2 = -1. Think step-by-step. Give me a long detailed explanation.\n\nAssistant:",
+    "Tell me about the president of the USA in wikipedia style.\n\nAssistant:",
+    "Hello? Who are you? Write code, math, and poem to explain yourself.\n\nAssistant:",
 ]
 
 
