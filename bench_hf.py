@@ -40,15 +40,19 @@ class GenerationTracker:
         return False
 
 
-def _fix_gen_config(model):
-    cfg = model.generation_config
+def _make_gen_config(max_new_tokens, do_sample=False):
+    return GenerationConfig(max_new_tokens=max_new_tokens, max_length=None, min_length=None, do_sample=do_sample)
+
+
+def _clear_draft_gen_config(model):
+    # Prevents the draft model's generation_config from conflicting with our GenerationConfig
     for attr in ("max_length", "min_length", "min_new_tokens"):
-        if hasattr(cfg, attr):
-            setattr(cfg, attr, None)
+        if hasattr(model.generation_config, attr):
+            setattr(model.generation_config, attr, None)
 
 
-def load_model(model_path, quantization=None):
-    kw = {"device_map": "auto", "torch_dtype": "auto"}
+def load_model(model_path, quantization=None, trust_remote_code=False):
+    kw = {"device_map": "auto", "torch_dtype": "auto", "trust_remote_code": trust_remote_code}
     if quantization == "4bit":
         kw["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -63,16 +67,14 @@ def load_model(model_path, quantization=None):
     return model
 
 
-def load_tokenizer(model_path):
-    tok = AutoTokenizer.from_pretrained(model_path)
+def load_tokenizer(model_path, trust_remote_code=False):
+    tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     return tok
 
 
 def get_gpu_memory_info():
-    if not torch.cuda.is_available():
-        return {}
     return {
         "allocated_mb": round(torch.cuda.memory_allocated() / 1024**2, 1),
         "reserved_mb": round(torch.cuda.memory_reserved() / 1024**2, 1),
@@ -86,9 +88,8 @@ def get_model_memory_mb(model):
 
 def warmup(model, tokenizer, draft_model=None, num_assistant_tokens=5):
     inputs = tokenizer("Hello!", return_tensors="pt").to(model.device)
-    gen_kwargs = {"generation_config": GenerationConfig(max_new_tokens=16, max_length=None, min_length=None)}
+    gen_kwargs = {"generation_config": _make_gen_config(16)}
     if draft_model is not None:
-        _fix_gen_config(draft_model)
         gen_kwargs["assistant_model"] = draft_model
         gen_kwargs["num_assistant_tokens"] = num_assistant_tokens
         gen_kwargs["num_assistant_tokens_schedule"] = "constant"
@@ -98,12 +99,9 @@ def warmup(model, tokenizer, draft_model=None, num_assistant_tokens=5):
     torch.cuda.synchronize()
 
 
-def run_benchmark(target_model, tokenizer, prompts, draft_model=None, num_assistant_tokens=5, max_new_tokens=256):
-    gen_kwargs = {
-        "generation_config": GenerationConfig(max_new_tokens=max_new_tokens, max_length=None, min_length=None)
-    }
+def run_benchmark(target_model, tokenizer, prompts, draft_model=None, num_assistant_tokens=5, max_new_tokens=256, do_sample=False):
+    gen_kwargs = {"generation_config": _make_gen_config(max_new_tokens, do_sample)}
     if draft_model is not None:
-        _fix_gen_config(draft_model)
         gen_kwargs["assistant_model"] = draft_model
         gen_kwargs["num_assistant_tokens"] = num_assistant_tokens
         gen_kwargs["num_assistant_tokens_schedule"] = "constant"
@@ -129,14 +127,13 @@ def run_benchmark(target_model, tokenizer, prompts, draft_model=None, num_assist
         total_fwd += tracker.forward_count
 
     decode_steps = total_fwd - len(prompts)
-    acc = total_tokens / decode_steps if decode_steps > 0 else 1.0
-    step_ms = (total_time / decode_steps) * 1000 if decode_steps > 0 else None
-    speed = total_tokens / total_time
+    acc = total_tokens / decode_steps
+    step_ms = (total_time / decode_steps) * 1000
 
     return {
         "acc_length": round(acc, 3),
-        "step_time_ms": round(step_ms, 3) if step_ms else None,
-        "speed_tok_s": round(speed, 2),
+        "step_time_ms": round(step_ms, 3),
+        "speed_tok_s": round(total_tokens / total_time, 2),
         "total_output_tokens": int(total_tokens),
         "total_time_s": round(total_time, 2),
         "target_forward_passes": int(total_fwd),
@@ -148,7 +145,7 @@ def run_benchmark(target_model, tokenizer, prompts, draft_model=None, num_assist
 def run_benchmark_suite(
     target_model, tokenizer, draft_model=None, draft_label="",
     num_assistant_tokens_list=None, max_new_tokens=256, num_prompts=8,
-    output_file=None, do_warmup=True,
+    output_file=None, do_warmup=True, do_sample=False,
 ):
     if num_assistant_tokens_list is None:
         num_assistant_tokens_list = [0, 3, 5, 8]
@@ -167,11 +164,11 @@ def run_benchmark_suite(
         if do_warmup:
             warmup(target_model, tokenizer, cur_draft, cur_nat)
 
-        metrics = run_benchmark(target_model, tokenizer, prompts, cur_draft, cur_nat, max_new_tokens)
+        metrics = run_benchmark(target_model, tokenizer, prompts, cur_draft, cur_nat, max_new_tokens, do_sample)
         record = {"draft_label": draft_label, "num_assistant_tokens": nat, "is_baseline": is_baseline, **metrics}
         results.append(record)
 
-        st_s = f", step={record['step_time_ms']:.1f}ms" if record["step_time_ms"] else ""
+        st_s = f", step={record['step_time_ms']:.1f}ms" if record["step_time_ms"] is not None else ""
         print(f"{record['speed_tok_s']:.1f} tok/s, acc={record['acc_length']:.3f}{st_s}")
 
         if output_file:
@@ -184,7 +181,7 @@ def run_benchmark_suite(
 def run_multi_draft_benchmark(
     target_model, tokenizer, draft_configs,
     num_assistant_tokens_list=None, max_new_tokens=256,
-    num_prompts=8, output_file="bench_results.jsonl",
+    num_prompts=8, output_file="bench_results.jsonl", do_sample=False,
 ):
     if num_assistant_tokens_list is None:
         num_assistant_tokens_list = [0, 3, 5, 8]
@@ -192,30 +189,27 @@ def run_multi_draft_benchmark(
     all_results = []
 
     for dc in draft_configs:
-        model_path = dc.get("model_path")
-        label = dc.get("label", model_path or "baseline")
+        label = dc.get("label", dc["model_path"])
         print(f"\n=== {label} ===")
 
-        draft_model = None
-        if model_path:
-            draft_model = load_model(model_path, quantization=dc.get("quantization"))
-            print(f"{get_model_memory_mb(draft_model):.0f} MB, GPU: {get_gpu_memory_info()}")
+        draft_model = load_model(dc["model_path"], quantization=dc.get("quantization"))
+        _clear_draft_gen_config(draft_model)
+        print(f"{get_model_memory_mb(draft_model):.0f} MB, GPU: {get_gpu_memory_info()}")
 
         try:
-            nat_list = num_assistant_tokens_list if model_path else [0]
             results = run_benchmark_suite(
                 target_model, tokenizer,
                 draft_model=draft_model, draft_label=label,
-                num_assistant_tokens_list=nat_list,
+                num_assistant_tokens_list=num_assistant_tokens_list,
                 max_new_tokens=max_new_tokens,
                 num_prompts=num_prompts,
                 output_file=output_file,
+                do_sample=do_sample,
             )
             all_results.extend(results)
         finally:
-            if draft_model is not None:
-                del draft_model
-                gc.collect()
-                torch.cuda.empty_cache()
+            del draft_model
+            gc.collect()
+            torch.cuda.empty_cache()
 
     return all_results
