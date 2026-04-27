@@ -62,6 +62,7 @@ def load_model(model_path, quantization=None, trust_remote_code=False):
         )
     elif quantization == "8bit":
         kw["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        kw["torch_dtype"] = torch.float16
     model = AutoModelForCausalLM.from_pretrained(model_path, **kw)
     model.eval()
     return model
